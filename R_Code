@@ -1,0 +1,353 @@
+library(extrafont)
+#font_import() #Comment: only used for installing for first time
+loadfonts()
+
+library(udpipe)
+#model<-udpipe_download_model(language = "tamil") #Comment: Only used for first time download
+udmodel_tamil<-udpipe_load_model("C:/Users/ASCII/Documents/tamil-ttb-ud-2.4-190531.udpipe")
+
+library(rvest)
+webpage<-read_html("https://www.projectmadurai.org/pm_etexts/utf8/pmuni0001.html",encoding="UTF-8")
+content_data_html<-html_nodes(webpage,'tr')
+des_data<-html_text(content_data_html)
+
+head(des_data)
+
+#Text cleaning - removing \n,trailing white spaces, numbers at trailend,fullstops at end
+des_data<-gsub("\n","",des_data)
+des_data<-gsub("[0-9]","",des_data)
+des_data<-gsub("[.]","",des_data)
+des_data<-trimws(des_data,which=c("both"))
+head(des_data)
+
+#Converting into dataframe
+text<-data.frame(tamil=des_data,stringsAsFactors = F)
+text<-as.data.frame(sapply(text, function(x) gsub("\"", "", x)))
+
+#Blank characters are removed in the dataframe - Matches to 1330 Kural now
+library(dplyr)
+text<-filter(text,!grepl("^\\s*$",text$tamil))
+head(text$tamil)
+
+#Adding parts/books - 'அறத்துப்பால்' , 'பொருட்பால்'','?காமத்துப்பால் ,to ythe  dataset
+text$part<-'NA'
+text$part[1:380]<-'அறத்துப்பால்'
+text$part[381:1080]<-'பொருட்பால்'
+text$part[1081:1330]<-'காமத்துப்பால்'
+
+#Splitting the kural into 3 part dataset
+library(stringr)
+aram<-text%>%filter(str_detect(part,"அறத்துப்பால்"))
+porul<-text%>%filter(str_detect(part,"பொருட்பால்"))
+inbam<-text%>%filter(str_detect(part,"காமத்துப்பால்"))
+
+#----------------------------------------------------------------
+#Annotating the aram kural text
+#----------------------------------------------------------------
+annt_aram<-udpipe::udpipe_annotate(udmodel_tamil,aram$tamil)
+annt_aram_df<-as.data.frame(annt_aram)
+
+table(annt_aram_df$upos)
+
+library(tidyverse)
+#Universal Parts of Speech - Frequency of Occurrence
+txt_freq(annt_aram_df$upos)%>%arrange(desc(freq))%>%
+                      ggplot()+geom_bar(aes(reorder(key,-freq),freq),stat="identity")+labs(title="Universal Parts of Speech - Frequency of Occurrence",x="Parts of Speech")
+
+#Most occurring Nouns
+annt_aram_df%>% filter(upos %in% c('NOUN'))%>%
+      count(lemma)%>%
+      arrange(desc(n))%>%
+      head(12)%>%
+      ggplot()+geom_bar(aes(reorder(lemma,-n),n),stat="identity")+labs(title="Most Commonly occurring Nouns",x="Nouns",y="count of Nouns")
+  
+#Most occurring adjectives
+annt_aram_df%>% filter(upos %in% c('ADJ'))%>%
+  count(token)%>%
+  arrange(desc(n))%>%
+  head(12)%>%
+  ggplot()+geom_bar(aes(reorder(token,-n),n),stat="identity")+labs(title="Most Commonly occurring Adjectives",x="Adjectives",y="count of Adjectives")
+
+#Most occurring verbs
+annt_aram_df%>% filter(upos %in% c('VERB'))%>%
+  count(token)%>%
+  arrange(desc(n))%>%
+  head(12)%>%
+  ggplot()+geom_bar(aes(reorder(token,-n),n),stat="identity")+labs(title="Most Commonly occurring Verbs",x="Verbs",y="count of Verbs")
+
+#Finding Keywords - Rake
+stats <- keywords_rake(x = annt_aram_df, term = "lemma",group = "doc_id",  
+                       relevant = annt_aram_df$upos %in% c("NOUN"),ngram_max = 3)
+stats%>%arrange(desc(rake))%>%head(12)%>%ggplot()+geom_bar(aes(reorder(keyword,-rake),rake),stat="identity")+labs(title="Keywords identified by Rake",x="keywords")
+
+#Finding Keywords - Pointwise Mutual Information Collocations
+stats<-keywords_collocation(x=annt_aram_df,term="lemma",group="doc_id",ngram_max = 3)
+stats%>%arrange(desc(pmi))%>%head(12)%>%ggplot()+geom_bar(aes(reorder(keyword,-pmi),pmi),stat="identity")+labs(title="Keywords identified by PMI",x="keywords")
+
+#Finding Co-occurrences
+cooc <- cooccurrence(x = subset(annt_aram_df, upos %in% c("NOUN", "ADJ")), 
+                     term = "lemma", 
+                     group = c("doc_id"))
+
+head(cooc)
+
+#Drawing wordcloud based on unigram, bigram and trigram
+
+library(wordcloud2)
+c1<-data.frame(token=txt_nextgram(annt_aram_df$token,n=1))
+y1<-document_term_frequencies(c1,term=c("token"))
+y1<-subset(y1,select=c(term,freq))
+x1<-y1%>%arrange(desc(freq))%>%head(300)
+wordcloud2(data=x1)
+
+c2<-data.frame(token=txt_nextgram(annt_aram_df$token,n=2))
+y2<-document_term_frequencies(c2,term=c("token"))
+y2<-subset(y2,select=c(term,freq))
+x2<-y2%>%arrange(desc(freq))%>%head(100)
+wordcloud2(data=x2)
+
+c3<-data.frame(token=txt_nextgram(annt_aram_df$token,n=3))
+y3<-document_term_frequencies(c3,term=c("token"))
+y3<-subset(y3,select=c(term,freq))
+x3<-y3%>%arrange(desc(freq))%>%head(50)
+wordcloud2(data=x3)
+
+#----------------------------------------------------------------
+# Similar Analysis for Porul text
+#----------------------------------------------------------------
+annt_porul<-udpipe::udpipe_annotate(udmodel_tamil,porul$tamil)
+annt_porul_df<-as.data.frame(annt_porul)
+
+table(annt_porul_df$upos)
+
+library(tidyverse)
+#Universal Parts of Speech - Frequency of Occurrence
+txt_freq(annt_porul_df$upos)%>%arrange(desc(freq))%>%
+  ggplot()+geom_bar(aes(reorder(key,-freq),freq),stat="identity")+labs(title="Universal Parts of Speech - Frequency of Occurrence",x="Parts of Speech")
+
+#Most occurring Nouns
+annt_porul_df%>% filter(upos %in% c('NOUN'))%>%
+  count(lemma)%>%
+  arrange(desc(n))%>%
+  head(12)%>%
+  ggplot()+geom_bar(aes(reorder(lemma,-n),n),stat="identity")+labs(title="Most Commonly occurring Nouns",x="Nouns",y="count of Nouns")
+
+#Most occurring adjectives
+annt_porul_df%>% filter(upos %in% c('ADJ'))%>%
+  count(token)%>%
+  arrange(desc(n))%>%
+  head(12)%>%
+  ggplot()+geom_bar(aes(reorder(token,-n),n),stat="identity")+labs(title="Most Commonly occurring Adjectives",x="Adjectives",y="count of Adjectives")
+
+#Most occurring verbs
+annt_porul_df%>% filter(upos %in% c('VERB'))%>%
+  count(token)%>%
+  arrange(desc(n))%>%
+  head(12)%>%
+  ggplot()+geom_bar(aes(reorder(token,-n),n),stat="identity")+labs(title="Most Commonly occurring Verbs",x="Verbs",y="count of Verbs")
+
+#Finding Keywords - Rake
+stats <- keywords_rake(x = annt_porul_df, term = "lemma",group = "doc_id",  
+                       relevant = annt_porul_df$upos %in% c("NOUN"),ngram_max = 3)
+stats%>%arrange(desc(rake))%>%head(12)%>%ggplot()+geom_bar(aes(reorder(keyword,-rake),rake),stat="identity")+labs(title="Keywords identified by Rake",x="keywords")
+
+#Finding Keywords - Pointwise Mutual Information Collocations
+stats<-keywords_collocation(x=annt_porul_df,term="lemma",group="doc_id",ngram_max = 3)
+stats%>%arrange(desc(pmi))%>%head(12)%>%ggplot()+geom_bar(aes(reorder(keyword,-pmi),pmi),stat="identity")+labs(title="Keywords identified by PMI",x="keywords")
+
+#Finding Co-occurrences
+cooc <- cooccurrence(x = subset(annt_porul_df, upos %in% c("NOUN", "ADJ")), 
+                     term = "lemma", 
+                     group = c("doc_id"))
+
+head(cooc)
+
+#Drawing wordcloud based on unigram, bigram and trigram
+
+library(wordcloud2)
+c1<-data.frame(token=txt_nextgram(annt_porul_df$token,n=1))
+y1<-document_term_frequencies(c1,term=c("token"))
+y1<-subset(y1,select=c(term,freq))
+x1<-y1%>%arrange(desc(freq))%>%head(300)
+wordcloud2(data=x1)
+
+c2<-data.frame(token=txt_nextgram(annt_porul_df$token,n=2))
+y2<-document_term_frequencies(c2,term=c("token"))
+y2<-subset(y2,select=c(term,freq))
+x2<-y2%>%arrange(desc(freq))%>%head(100)
+wordcloud2(data=x2)
+
+c3<-data.frame(token=txt_nextgram(annt_porul_df$token,n=3))
+y3<-document_term_frequencies(c3,term=c("token"))
+y3<-subset(y3,select=c(term,freq))
+x3<-y3%>%arrange(desc(freq))%>%head(50)
+wordcloud2(data=x3)
+
+#-----------------------------------------------------------------
+# Similar Analysis for Inbam text
+#-----------------------------------------------------------------
+annt_inbam<-udpipe::udpipe_annotate(udmodel_tamil,inbam$tamil)
+annt_inbam_df<-as.data.frame(annt_inbam)
+
+table(annt_inbam_df$upos)
+
+library(tidyverse)
+#Universal Parts of Speech - Frequency of Occurrence
+txt_freq(annt_inbam_df$upos)%>%arrange(desc(freq))%>%
+  ggplot()+geom_bar(aes(reorder(key,-freq),freq),stat="identity")+labs(title="Universal Parts of Speech - Frequency of Occurrence",x="Parts of Speech")
+
+#Most occurring Nouns
+annt_inbam_df%>% filter(upos %in% c('NOUN'))%>%
+  count(lemma)%>%
+  arrange(desc(n))%>%
+  head(12)%>%
+  ggplot()+geom_bar(aes(reorder(lemma,-n),n),stat="identity")+labs(title="Most Commonly occurring Nouns",x="Nouns",y="count of Nouns")
+
+#Most occurring adjectives
+annt_inbam_df%>% filter(upos %in% c('ADJ'))%>%
+  count(token)%>%
+  arrange(desc(n))%>%
+  head(12)%>%
+  ggplot()+geom_bar(aes(reorder(token,-n),n),stat="identity")+labs(title="Most Commonly occurring Adjectives",x="Adjectives",y="count of Adjectives")
+
+#Most occurring verbs
+annt_inbam_df%>% filter(upos %in% c('VERB'))%>%
+  count(token)%>%
+  arrange(desc(n))%>%
+  head(12)%>%
+  ggplot()+geom_bar(aes(reorder(token,-n),n),stat="identity")+labs(title="Most Commonly occurring Verbs",x="Verbs",y="count of Verbs")
+
+#Finding Keywords - Rake
+stats <- keywords_rake(x = annt_inbam_df, term = "lemma",group = "doc_id",  
+                       relevant = annt_inbam_df$upos %in% c("NOUN"),ngram_max = 3)
+stats%>%arrange(desc(rake))%>%head(12)%>%ggplot()+geom_bar(aes(reorder(keyword,-rake),rake),stat="identity")+labs(title="Keywords identified by Rake",x="keywords")
+
+#Finding Keywords - Pointwise Mutual Information Collocations
+stats<-keywords_collocation(x=annt_inbam_df,term="lemma",group="doc_id",ngram_max = 2)
+stats%>%arrange(desc(pmi))%>%ggplot()+geom_bar(aes(reorder(keyword,-pmi),pmi),stat="identity")+labs(title="Keywords identified by PMI",x="keywords")
+
+#Finding Co-occurrences
+cooc <- cooccurrence(x = subset(annt_inbam_df, upos %in% c("NOUN", "ADJ")), 
+                     term = "lemma", 
+                     group = c("doc_id"))
+
+head(cooc)
+
+#Drawing wordcloud based on unigram, bigram and trigram
+
+library(wordcloud2)
+c1<-data.frame(token=txt_nextgram(annt_inbam_df$token,n=1))
+y1<-document_term_frequencies(c1,term=c("token"))
+y1<-subset(y1,select=c(term,freq))
+x1<-y1%>%arrange(desc(freq))%>%head(300)
+wordcloud2(data=x1)
+
+c2<-data.frame(token=txt_nextgram(annt_inbam_df$token,n=2))
+y2<-document_term_frequencies(c2,term=c("token"))
+y2<-subset(y2,select=c(term,freq))
+x2<-y2%>%arrange(desc(freq))%>%head(100)
+wordcloud2(data=x2)
+
+c3<-data.frame(token=txt_nextgram(annt_inbam_df$token,n=3))
+y3<-document_term_frequencies(c3,term=c("token"))
+y3<-subset(y3,select=c(term,freq))
+x3<-y3%>%arrange(desc(freq))%>%head(50)
+wordcloud2(data=x3)
+
+#---------------------------------------------------------------
+#Topic Modelling for the entire Kural text
+#---------------------------------------------------------------
+annt<-udpipe::udpipe_annotate(udmodel_tamil,text$tamil)
+annt_df<-as.data.frame(annt)
+
+
+## Get a data.frame with 1 row per id/lemma
+dtf<-annt_df%>%select(token,lemma,upos)%>%filter(upos=='NOUN')
+dtf1<- document_term_frequencies(dtf,term = c("lemma"))
+dtm<-document_term_matrix(dtf1)
+#dtm_clean <- dtm_remove_lowfreq(dtm, minfreq = 5)
+#dtm_clean <- dtm_remove_tfidf(dtm_clean, top = 50)
+
+#Topic Modelling using Gibbs Sampling method
+library(topicmodels)
+#Set parameters for Gibbs sampling
+burnin <- 2000
+iter <- 4000
+thin <- 500
+seed <-list(2003,5,63,100001,765)
+nstart <- 5
+best <- TRUE
+
+
+m <- LDA(dtm, k = 3, method = "Gibbs", 
+         control = list(nstart = nstart,seed=seed, burnin = burnin, best = best,iter=iter,thin=thin))
+ldaout_topics<-as.matrix(topics(m))
+ladaout_terms <-as.matrix(terms(m,20))
+topicProbabilities <- as.data.frame(m@gamma)
+
+#Topic Modelling using VEM method
+ap_lda<-LDA(dtm,k=3,control=list(seed=1234))
+ap_lda
+
+library(tidytext)
+ap_topics<-tidy(ap_lda,matrix="beta")
+ap_top_terms <- ap_topics %>%
+  group_by(topic) %>%
+  top_n(20, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+
+
+ap_top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered()
+
+# ap_documents <- tidy(ap_lda, matrix = "gamma")
+# ap_documents
+# 
+# ap_top_documents <- ap_documents %>%
+#   group_by(topic) %>%
+#   top_n(20, gamma) %>%
+#   ungroup() %>%
+#   arrange(topic, -gamma)
+# 
+# ap_top_documents %>%
+#   mutate(term = reorder_within(document, gamma, topic)) %>%
+#   ggplot(aes(term, gamma, fill = factor(topic))) +
+#   geom_col(show.legend = FALSE) +
+#   facet_wrap(~ topic, scales = "free") +
+#   coord_flip() +
+#   scale_x_reordered()
+
+#----------------------------------------------------------------
+# Extractive summarization using Text rank algorithm
+#----------------------------------------------------------------
+df<-udpipe::udpipe_annotate(udmodel_tamil,text$tamil)
+df<-as.data.frame(df)
+keyw<-textrank_keywords(df$lemma,relevant = df$upos %in% c("NOUN","VERB","ADJ"))
+key_subset<-subset(keyw$keywords,ngram > 1 & freq > 1)
+
+
+df$textrank_id <- unique_identifier(df, c("doc_id", "paragraph_id", "sentence_id"))
+sentences <- unique(df[, c("textrank_id", "sentence")])
+terminology <- subset(df, upos %in% c("NOUN"))
+terminology <- terminology[, c("textrank_id", "lemma")]
+head(terminology)
+
+#----------------------Not to run the below lines of code------------------------
+#library(textreuse)
+#minhash <- minhash_generator(n = 1000, seed = 123456789)
+#candidates <- textrank_candidates_lsh(x = unique(terminology$lemma), 
+                                      sentence_id = terminology$textrank_id,
+                                      minhashFUN = minhash, 
+                                      bands = 500)
+
+#names(tr)
+
+#candidates<- textrank_candidates_all(unique(df$textrank_id))
+#tr <- textrank_sentences(data = sentences, terminology = terminology,textrank_candidates = candidates)
